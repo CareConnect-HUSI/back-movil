@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+psycopg2-binary
+sqlalchemy
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+pyngrok==7.2.3
+
