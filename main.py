@@ -4,6 +4,8 @@ import psycopg2  # type: ignore
 from psycopg2 import Error  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 from pyngrok import ngrok # type: ignore
+import bcrypt # type: ignore
+import jwt  # type: ignore
 import os
 
 # Cargar variables de entorno
@@ -11,13 +13,24 @@ load_dotenv()
 
 app = FastAPI()
 
+# JWT
+SECRET_KEY = os.getenv("SECRET_KEY", "clave_super_secreta")
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    token: str
+    nombre: str
+
 # Configuración de la conexión a la base de datos
 conexion_params = {
-    "host": os.getenv("DB_HOST", "tu-host.neon.tech"),
+    "host": os.getenv("DB_HOST").replace("jdbc:postgresql://", "").split("/")[0],
     "port": os.getenv("DB_PORT", "5432"),
-    "database": os.getenv("DB_NAME", "nombre_base_datos"),
-    "user": os.getenv("DB_USER", "tu_usuario"),
-    "password": os.getenv("DB_PASSWORD", "tu_contraseña"),
+    "database": os.getenv("DB_NAME", "neondb"),
+    "user": os.getenv("DB_USER", "neondb_owner"),
+    "password": os.getenv("DB_PASSWORD", "npg_1YOUFf6IhLZA"),
     "sslmode": "require" 
 }
 
@@ -29,37 +42,36 @@ def conectar_db():
         print("Error al conectar a la base de datos:", error)
         return None
 
-# Modelo para la respuesta (opcional, ajusta según tus necesidades)
-class Item(BaseModel):
-    id: int
-    nombre: str  # Ajusta los campos según tu tabla
-
-@app.get("/datos", response_model=list[Item])
-async def obtener_datos():
-    conexion = conectar_db()
-    if conexion is None:
-        raise HTTPException(status_code=500, detail="No se pudo conectar a la base de datos")
-
+@app.post("/login", response_model=LoginResponse)
+async def login(data: LoginRequest):
+    conn = conectar_db()
     try:
-        cursor = conexion.cursor()
-        # Consulta de ejemplo (ajusta según tu tabla)
-        cursor.execute("SELECT id, nombre FROM enfermera")
-        resultados = cursor.fetchall()
+        cur = conn.cursor()
+        cur.execute("SELECT id, nombre, password FROM enfermera WHERE email = %s", (data.email,))
+        result = cur.fetchone()
+        if result is None:
+            raise HTTPException(status_code=401, detail="Correo no encontrado")
 
-        # Convertir resultados a lista de diccionarios
-        datos = [{"id": fila[0], "nombre": fila[1]} for fila in resultados]
+        id_, nombre, hashed_pw = result
+        if hashed_pw.startswith("$2a$"):
+        # contraseña cifrada
+            if not bcrypt.checkpw(data.password.encode(), hashed_pw.encode()):
+                raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+        else:
+        # contraseña en texto plano
+            if data.password != hashed_pw:
+                raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
-        return datos
+        token = jwt.encode({"id": id_, "nombre": nombre}, SECRET_KEY, algorithm="HS256")
+        return {"token": token, "nombre": nombre}
 
-    except (Exception, Error) as error:
-        print("Error al ejecutar la consulta:", error)
-        raise HTTPException(status_code=500, detail="Error al obtener los datos")
+    except Exception as e:
+        print("Error en login:", e)
+        raise HTTPException(status_code=500, detail="Error interno")
 
     finally:
-        if cursor:
-            cursor.close()
-        if conexion:
-            conexion.close()
+        cur.close()
+        conn.close()
 
 
 public_url = ngrok.connect(8000, "http")
