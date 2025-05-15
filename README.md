@@ -8,6 +8,11 @@ Si otra persona (o tú mismo en otro equipo) clona el repositorio, deberá segui
 ```bash
 python -m venv venv
 ```
+o
+```bash
+python3 -m venv venv
+```
+Dependiendo de la versión de Python
 
 **2. Activarlo**
 
@@ -29,6 +34,11 @@ pip install -r requirements.txt
 ```bash
 python3 main.py
 ```
+o
+```bash
+python main.py
+```
+Dependiendo de la versión de Python
 
 Estos pasos aseguran que el entorno virtual esté correctamente configurado y que todas las dependencias necesarias sean instaladas para ejecutar el proyecto sin problemas.
 
