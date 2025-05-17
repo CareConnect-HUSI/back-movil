@@ -1,12 +1,14 @@
-from fastapi import FastAPI, HTTPException  # type: ignore
-from pydantic import BaseModel  # type: ignore
+import datetime
+from fastapi import FastAPI, HTTPException, Depends, Header # type: ignore
+from pydantic import BaseModel, ConfigDict  # type: ignore
 import psycopg2  # type: ignore
 from psycopg2 import Error  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 from pyngrok import ngrok # type: ignore
 import bcrypt # type: ignore
-import jwt  # type: ignore
+from jose import jwt, JWTError # type: ignore
 import os
+from datetime import datetime, timedelta
 
 # Cargar variables de entorno
 load_dotenv()
@@ -24,13 +26,24 @@ class LoginResponse(BaseModel):
     token: str
     nombre: str
 
+class PatientResponse(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    nombre: str
+    diagnostico: str
+    hora: str
+    direccion: str
+    estadoVisita: str
+
+class PatientsListResponse(BaseModel):
+    patients: list[PatientResponse]
+
 # Configuración de la conexión a la base de datos
 conexion_params = {
-    "host": os.getenv("DB_HOST").replace("jdbc:postgresql://", "").split("/")[0],
-    "port": os.getenv("DB_PORT", "5432"),
-    "database": os.getenv("DB_NAME", "neondb"),
-    "user": os.getenv("DB_USER", "neondb_owner"),
-    "password": os.getenv("DB_PASSWORD", "npg_1YOUFf6IhLZA"),
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT"),
+    "database": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
     "sslmode": "require" 
 }
 
@@ -41,37 +54,119 @@ def conectar_db():
     except (Exception, Error) as error:
         print("Error al conectar a la base de datos:", error)
         return None
+    
+def get_current_user(authorization: str = Header(...)):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token inválido")
+    token = authorization.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
 
 @app.post("/login", response_model=LoginResponse)
 async def login(data: LoginRequest):
     conn = conectar_db()
+    if conn is None:
+        raise HTTPException(status_code=500, detail="Error de conexión a la base de datos")
+
     try:
         cur = conn.cursor()
         cur.execute("SELECT id, nombre, password FROM enfermera WHERE email = %s", (data.email,))
         result = cur.fetchone()
         if result is None:
-            raise HTTPException(status_code=401, detail="Correo no encontrado")
+            raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
 
         id_, nombre, hashed_pw = result
-        if hashed_pw.startswith("$2a$"):
-        # contraseña cifrada
-            if not bcrypt.checkpw(data.password.encode(), hashed_pw.encode()):
-                raise HTTPException(status_code=401, detail="Contraseña incorrecta")
-        else:
-        # contraseña en texto plano
-            if data.password != hashed_pw:
-                raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+        print(result)
 
-        token = jwt.encode({"id": id_, "nombre": nombre}, SECRET_KEY, algorithm="HS256")
+        if hashed_pw.startswith("$2a$"):
+            # Contraseña cifrada
+            if not bcrypt.checkpw(data.password.encode(), hashed_pw.encode()):
+                raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
+        else:
+            # Contraseña en texto plano
+            if data.password != hashed_pw:
+                raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
+        # Token con expiración de 24 horas
+        payload = {
+            "id": id_,
+            "nombre": nombre,
+            "exp": datetime.utcnow() + timedelta(hours=24)
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
         return {"token": token, "nombre": nombre}
 
+    except HTTPException:
+        # Permitir que errores 401 se propaguen tal como están
+        raise
     except Exception as e:
         print("Error en login:", e)
-        raise HTTPException(status_code=500, detail="Error interno")
-
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
     finally:
-        cur.close()
-        conn.close()
+        try:
+            cur.close()
+            conn.close()
+        except:
+            pass  # Evita errores si conn o cur no se crearon correctamente
+
+
+@app.get("/pacientes", response_model=PatientsListResponse)
+async def get_pacientes(current_user: dict = Depends(get_current_user)):
+    conn = conectar_db()
+    if conn is None:
+        raise HTTPException(status_code=500, detail="Error de conexión a la base de datos")
+    try:
+        cur = conn.cursor()
+        # Del token se extrae el id del usuario
+        id_ = current_user["id"]
+        # Se obtiene la fecha actual
+        fecha_actual = datetime.now().date()
+        # Se obtiene la fecha de la visita
+        fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+        cur.execute("""
+            SELECT
+                p.nombre || ' ' || p.apellido AS nombre_completo,
+                a.name AS diagnostico,
+                v.hora_inicio_calculada,
+                p.direccion,
+                v.estado
+            FROM
+                visita v
+            JOIN actividad_paciente_visita apv ON v.actividad_paciente_visita_id = apv.id
+            JOIN paciente p ON apv.paciente_id = p.id
+            JOIN actividad a ON apv.actividad_id = a.id
+            WHERE
+                v.enfermera_id = %s
+                AND v.fecha_visita = %s
+                AND p.estado = 'Activo'
+        """, (id_,fecha_visita))
+        result = cur.fetchall()
+        print("Resultado de la consulta:", result)
+        pacientes = []
+        for row in result:
+             paciente = PatientResponse(
+                nombre=row[0] or "Sin nombre",
+                diagnostico=row[1] or "Sin diagnóstico",
+                hora=row[2].strftime("%H:%M") if row[2] else "Sin hora",
+                direccion=row[3] or "Sin dirección",
+                estadoVisita=row[4] or "Sin estado",
+            )
+        pacientes.append(paciente)
+
+        print("Pacientes:", pacientes)
+        return {"patients":pacientes}
+    except Exception as e:
+        print("Error en get_pacientes:", e)
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+    finally:
+        try:
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print("Error al cerrar conexión:", e)
 
 
 public_url = ngrok.connect(8000, "http")
