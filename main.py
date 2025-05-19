@@ -1,13 +1,15 @@
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
-import psycopg2
-from psycopg2 import Error
-from dotenv import load_dotenv
-from pyngrok import ngrok
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, HTTPException, Depends #type: ignore
+from pydantic import BaseModel #type: ignore
+import psycopg2 #type: ignore
+from psycopg2 import Error #type: ignore
+from dotenv import load_dotenv #type: ignore
+from pyngrok import ngrok #type: ignore
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials #type: ignore
 from typing import List
-import bcrypt
-import jwt
+from datetime import datetime
+from pydantic import BaseModel, Field #type: ignore
+import bcrypt #type: ignore 
+import jwt #type: ignore
 import os
 
 # Cargar variables de entorno
@@ -28,10 +30,24 @@ class LoginResponse(BaseModel):
     nombre: str
 
 class PacienteResponse(BaseModel):
+    visita_id: int = Field(..., alias="visitaId")
     nombre: str
     hora: str
     direccion: str
+    telefono: str
     estadoVisita: str
+
+class HorasVisitaRequest(BaseModel):
+    llegada: str
+    salida: str
+
+class ProcedimientoResponse(BaseModel):
+    nombre: str
+
+class InsumoResponse(BaseModel):
+    codigo: int
+    insumo: str
+
 
 # Configuración de la conexión
 conexion_params = {
@@ -99,12 +115,14 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT 
+            SELECT
+                v.id, 
                 p.nombre,
                 p.apellido,
                 apv.hora,
                 p.direccion,
-                v.estado
+                p.telefono,    
+                v.estado    
             FROM visita v
             JOIN actividad_paciente_visita apv ON v.actividad_paciente_visita_id = apv.id
             JOIN paciente p ON apv.paciente_id = p.id
@@ -113,11 +131,13 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
 
         rows = cur.fetchall()
         for row in rows:
-            nombre, apellido, hora, direccion, estado_visita = row
+            visita_id, nombre, apellido, hora, direccion, telefono, estado_visita = row
             pacientes_respuesta.append(PacienteResponse(
+                visitaId = visita_id,
                 nombre=f"{nombre} {apellido}",
                 hora=hora.strftime("%H:%M") if hora else "Sin hora",
                 direccion=direccion or "Sin dirección",
+                telefono=telefono or "Sin teléfono",
                 estadoVisita=estado_visita or "NO_INICIADA"
             ))
 
@@ -130,10 +150,73 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
         cur.close()
         conn.close()
 
+@app.post("/visita/{id}/hora")
+def registrar_horas_visita(id: int, body: HorasVisitaRequest):
+    print(">>> POST recibido:", id, body)
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE visita
+            SET hora_inicio_ejecutada = %s, hora_fin_ejecutada = %s
+            WHERE id = %s
+        """, (body.llegada, body.salida, id))
+        conn.commit()
+        return {"mensaje": "Horas actualizadas"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/visita/{visita_id}/procedimientos", response_model=List[ProcedimientoResponse])
+def obtener_procedimientos(visita_id: int, token: HTTPAuthorizationCredentials = Depends(security)):
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT a.name
+            FROM actividad_paciente_visita apv
+            JOIN actividad a ON apv.actividad_id = a.id
+            JOIN visita v ON v.actividad_paciente_visita_id = apv.id
+            WHERE v.id = %s
+        """, (visita_id,))
+        rows = cur.fetchall()
+        return [ProcedimientoResponse(nombre=row[0]) for row in rows]
+    except Exception as e:
+        print("Error al obtener procedimientos:", e)
+        raise HTTPException(status_code=500, detail="Error interno al obtener procedimientos")
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/visita/{visita_id}/insumos", response_model=List[InsumoResponse])
+def obtener_insumos_por_visita(visita_id: int):
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT iip.id, a.name AS insumo
+            FROM visita v
+            JOIN actividad_paciente_visita apv ON v.actividad_paciente_visita_id = apv.id
+            JOIN paciente p ON apv.paciente_id = p.id
+            JOIN instalacion_insumos_paciente iip ON p.id = iip.paciente_id
+            JOIN actividad a ON iip.actividad_id = a.id
+            WHERE v.id = %s
+        """, (visita_id,))
+        rows = cur.fetchall()
+        return [InsumoResponse(codigo=row[0], insumo=row[1]) for row in rows]
+    except Exception as e:
+        print("Error al obtener insumos:", e)
+        raise HTTPException(status_code=500, detail="Error interno al obtener insumos")
+    finally:
+        cur.close()
+        conn.close()
+
 # Exponer con ngrok
 public_url = ngrok.connect(8000, "http")
 print(f"Web service accesible en: {public_url}")
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn #type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)
