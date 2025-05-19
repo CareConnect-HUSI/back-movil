@@ -6,4 +6,5 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
 pyngrok==7.2.3
+PyJWT==2.8.0
 
