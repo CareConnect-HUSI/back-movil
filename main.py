@@ -48,6 +48,10 @@ class InsumoResponse(BaseModel):
     codigo: int
     insumo: str
 
+class InsumoConsumidoRequest(BaseModel):
+    codigo: int  # este será el instalacion_insumo_id
+    cantidad: int
+
 
 # Configuración de la conexión
 conexion_params = {
@@ -209,6 +213,45 @@ def obtener_insumos_por_visita(visita_id: int):
     except Exception as e:
         print("Error al obtener insumos:", e)
         raise HTTPException(status_code=500, detail="Error interno al obtener insumos")
+    finally:
+        cur.close()
+        conn.close()
+
+@app.post("/visita/{visita_id}/insumos/consumidos")
+def registrar_insumos_consumidos(
+    visita_id: int,
+    insumos: List[InsumoConsumidoRequest]
+):
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        for insumo in insumos:
+            # Verificamos si ya existe ese registro
+            cur.execute("""
+                SELECT id FROM insumos_consumidos
+                WHERE instalacion_insumos_paciente_id = %s AND visita_id = %s
+            """, (insumo.codigo, visita_id))
+            existe = cur.fetchone()
+
+            if existe:
+                # Si ya existe, actualizamos la cantidad
+                cur.execute("""
+                    UPDATE insumos_consumidos
+                    SET cantidad_consumida = %s
+                    WHERE instalacion_insumos_paciente_id = %s AND visita_id = %s
+                """, (insumo.cantidad, insumo.codigo, visita_id))
+            else:
+                # Si no existe, lo insertamos
+                cur.execute("""
+                    INSERT INTO insumos_consumidos (instalacion_insumos_paciente_id, visita_id, cantidad_consumida)
+                    VALUES (%s, %s, %s)
+                """, (insumo.codigo, visita_id, insumo.cantidad))
+
+        conn.commit()
+        return {"mensaje": "Insumos consumidos registrados correctamente"}
+    except Exception as e:
+        print("Error al registrar insumos consumidos:", e)
+        raise HTTPException(status_code=500, detail="Error al registrar insumos consumidos")
     finally:
         cur.close()
         conn.close()
