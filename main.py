@@ -52,6 +52,9 @@ class InsumoConsumidoRequest(BaseModel):
     codigo: int  # este será el instalacion_insumo_id
     cantidad: int
 
+class VisitStatusRequest(BaseModel):
+    estadoVisita: str
+
 
 # Configuración de la conexión
 conexion_params = {
@@ -118,8 +121,9 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
     try:
         cur = conn.cursor()
 
-        fecha_actual = datetime.now()
-        fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+        # fecha_actual = datetime.now()
+        # fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+        fecha_visita = "2025-05-18"
 
         cur.execute("""
             SELECT
@@ -256,6 +260,47 @@ def registrar_insumos_consumidos(
     except Exception as e:
         print("Error al registrar insumos consumidos:", e)
         raise HTTPException(status_code=500, detail="Error al registrar insumos consumidos")
+    finally:
+        cur.close()
+        conn.close()
+
+@app.put("/visita/{visita_id}/status")
+def update_visit_status(
+    visita_id: int,
+    status: VisitStatusRequest,
+    enfermera_id: int = Depends(get_current_enfermera_id)
+):
+    print(">>> PUT recibido:", visita_id, status, enfermera_id)
+
+    conn = conectar_db()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Error al conectar a la base de datos")
+    
+    
+    try:
+        cur = conn.cursor()
+        # Verify the visit exists and belongs to the enfermera
+        cur.execute("""
+            SELECT id FROM visita 
+            WHERE id = %s AND enfermera_id = %s
+        """, (visita_id, enfermera_id))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Visita no encontrada o no autorizada")
+
+        # Update the estado field
+        cur.execute("""
+            UPDATE visita
+            SET estado = %s
+            WHERE id = %s
+        """, (status.estadoVisita, visita_id))
+        
+        conn.commit()
+        return {"mensaje": "Estado de visita actualizado correctamente"}
+    
+    except Exception as e:
+        print("Error al actualizar estado de visita:", e)
+        raise HTTPException(status_code=500, detail=f"Error al actualizar estado: {str(e)}")
+    
     finally:
         cur.close()
         conn.close()
