@@ -118,6 +118,9 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
     try:
         cur = conn.cursor()
 
+        fecha_actual = datetime.now()
+        fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+
         cur.execute("""
             SELECT
                 v.id, 
@@ -131,7 +134,8 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
             JOIN actividad_paciente_visita apv ON v.actividad_paciente_visita_id = apv.id
             JOIN paciente p ON apv.paciente_id = p.id
             WHERE v.enfermera_id = %s
-        """, (enfermera_id,))
+            AND v.fecha_visita = %s
+        """, (enfermera_id,fecha_visita))
 
         rows = cur.fetchall()
         for row in rows:
