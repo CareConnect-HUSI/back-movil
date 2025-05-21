@@ -263,6 +263,27 @@ def registrar_insumos_consumidos(
     finally:
         cur.close()
         conn.close()
+        
+@app.get("/visita/{visita_id}/estado")
+def obtener_estado_visita(visita_id: int):
+    print(f">>> Consultando estado de visita ID: {visita_id}")
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT estado FROM visita WHERE id = %s", (visita_id,))
+        row = cur.fetchone()
+        if row:
+            print(f">>> Estado encontrado: {row[0]}")
+            return {"estado": row[0]}
+        else:
+            print(f">>> Visita con ID {visita_id} no encontrada en la base de datos.")
+            raise HTTPException(status_code=404, detail="Visita no encontrada")
+    except Exception as e:
+        print("Error al obtener estado:", e)
+        raise HTTPException(status_code=500, detail="Error interno")
+    finally:
+        cur.close()
+        conn.close()
 
 @app.put("/visita/{visita_id}/status")
 def update_visit_status(
