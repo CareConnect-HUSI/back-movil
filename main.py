@@ -121,9 +121,9 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
     try:
         cur = conn.cursor()
 
-        fecha_actual = datetime.now()
-        fecha_visita = fecha_actual.strftime("%Y-%m-%d")
-        # fecha_visita = "2025-05-18"
+        # fecha_actual = datetime.now()
+        # fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+        fecha_visita = "2025-05-21"
 
         cur.execute("""
             SELECT
@@ -260,6 +260,24 @@ def registrar_insumos_consumidos(
     except Exception as e:
         print("Error al registrar insumos consumidos:", e)
         raise HTTPException(status_code=500, detail="Error al registrar insumos consumidos")
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/visita/{visita_id}/insumos/consumidos", response_model=List[InsumoConsumidoRequest])
+def obtener_insumos_consumidos(visita_id: int):
+    conn = conectar_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT instalacion_insumos_paciente_id, cantidad_consumida
+            FROM insumos_consumidos
+            WHERE visita_id = %s
+        """, (visita_id,))
+        rows = cur.fetchall()
+        return [{"codigo": row[0], "cantidad": row[1]} for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error al obtener insumos consumidos")
     finally:
         cur.close()
         conn.close()
