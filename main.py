@@ -121,9 +121,9 @@ def obtener_pacientes_asignados(enfermera_id: int = Depends(get_current_enfermer
     try:
         cur = conn.cursor()
 
-        # fecha_actual = datetime.now()
-        # fecha_visita = fecha_actual.strftime("%Y-%m-%d")
-        fecha_visita = "2025-05-21"
+        fecha_actual = datetime.now()
+        fecha_visita = fecha_actual.strftime("%Y-%m-%d")
+        # fecha_visita = "2025-05-26"
 
         cur.execute("""
             SELECT
